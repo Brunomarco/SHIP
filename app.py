@@ -592,7 +592,7 @@ if uploaded_file is not None:
         st.markdown("---")
         st.subheader("📋 Executive Summary & Actionable Insights")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("#### 📊 Performance Metrics")
@@ -620,29 +620,8 @@ if uploaded_file is not None:
             
             **Improvement Potential:**
             - Controllable impact: **{net_otp-gross_otp:.1f}%**
-            - Status: {'✅ Above target' if gross_otp >= 90 else '⚠️ Below target'}
             """)
-        
-        with col3:
-            st.markdown("#### 💡 Key Actions")
-            
-            # Calculate controllable issues percentage
-            if 'QCCODE' in df.columns:
-                qc_issues = df[df['QCCODE'].notna()]
-                controllable_issues = qc_issues[qc_issues['QCCODE'].isin(CONTROLLABLE_QC_CODES)]
-                controllable_pct = (len(controllable_issues) / len(qc_issues) * 100) if len(qc_issues) > 0 else 0
-            else:
-                controllable_pct = 0
-            
-            st.markdown(f"""
-            **Recommendations:**
-            1. Focus on controllable delays ({controllable_pct:.0f}% of issues)
-            2. Optimize top 3 departure points for cost
-            3. Review high-cost routes for efficiency
-            4. {'Maintain' if gross_otp >= 90 else 'Improve'} OTP performance
-            5. Address internal process gaps
-            """)
-        
+
         # Data Quality Footer
         st.markdown("---")
         col1, col2, col3, col4 = st.columns(4)
