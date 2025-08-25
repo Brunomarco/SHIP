@@ -7,9 +7,8 @@ import numpy as np
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
-import io
 
-# Page configuration - MUST be first Streamlit command
+# Page configuration
 st.set_page_config(
     page_title="Shipment Cost Analytics Dashboard",
     page_icon="📊",
@@ -56,44 +55,49 @@ st.markdown("**Executive Overview - Facts & Figures**")
 
 # Define controllable QC codes
 CONTROLLABLE_QC_CODES = [
-    262, 287, 183, 197, 199, 308, 309, 319, 326, 278, 203
+    262,  # MNX-Incorrect QDT
+    287,  # MNX-Order Entry error
+    183,  # Del Agt-Late del
+    197,  # Del Agt-Late del-Out of hours
+    199,  # Del Agt-Missing documents
+    308,  # Customs delay
+    309,  # Customs delay-FDA Hold
+    319,  # Customs-Late PWK-Customer
+    326,  # W/House-Data entry errors
+    278,  # MNX-Late dispatch-Delivery
+    203   # PU Agt -Late pick up
 ]
 
-# Optimized data loading function with caching
-@st.cache_data(show_spinner=False)
-def load_and_process_data(file_bytes):
-    """Load and process Excel data with all transformations"""
-    # Read Excel file
-    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+# Load data function with optimizations
+@st.cache_data
+def load_data(file):
+    """Load and process Excel data efficiently"""
+    # Read Excel with minimal parsing
+    df = pd.read_excel(file, engine='openpyxl')
     
-    # Drop duplicate column names
-    df = df.loc[:, ~df.columns.duplicated()]
-    
-    # Filter only 440-BILLED status
+    # Filter only 440-BILLED status first to reduce data size
     df = df[df['STATUS'] == '440-BILLED'].copy()
     
-    # Convert date columns
-    date_columns = ['ORD CREATE', 'READY', 'QT PU', 'ACT PU', 'QDT', 'UPD DEL', 
-                   'POD DATE/TIME', 'Depart Date / Time', 'Arrive Date / Time', 
-                   'PICKUP DATE/TIME', 'Depart Date']
-    
-    for col in date_columns:
+    # Convert only essential date columns
+    essential_dates = ['QDT', 'POD DATE/TIME', 'ORD CREATE']
+    for col in essential_dates:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce')
     
     # Currency conversion (USD to EUR)
     USD_TO_EUR = 0.92
-    df['TOTAL_CHARGES_EUR'] = pd.to_numeric(df['TOTAL CHARGES'], errors='coerce') * USD_TO_EUR
+    if 'TOTAL CHARGES' in df.columns:
+        df['TOTAL_CHARGES_EUR'] = pd.to_numeric(df['TOTAL CHARGES'], errors='coerce') * USD_TO_EUR
     
-    # Create route column
-    if {'DEP', 'ARR'}.issubset(df.columns):
+    # Create route column if needed
+    if 'DEP' in df.columns and 'ARR' in df.columns:
         df['Route'] = df['DEP'].astype(str) + ' → ' + df['ARR'].astype(str)
     
     return df
 
-@st.cache_data(show_spinner=False)
-def calculate_otp_metrics(df, controllable_codes):
-    """Calculate OTP metrics with caching"""
+# Calculate OTP metrics
+def calculate_otp(df):
+    """Calculate OTP metrics efficiently"""
     df_otp = df.dropna(subset=['QDT', 'POD DATE/TIME']).copy()
     
     if len(df_otp) == 0:
@@ -101,7 +105,7 @@ def calculate_otp_metrics(df, controllable_codes):
     
     df_otp['ON_TIME_GROSS'] = df_otp['POD DATE/TIME'] <= df_otp['QDT']
     df_otp['LATE'] = ~df_otp['ON_TIME_GROSS']
-    df_otp['CONTROLLABLE_DELAY'] = df_otp['QCCODE'].isin(controllable_codes)
+    df_otp['CONTROLLABLE_DELAY'] = df_otp['QCCODE'].isin(CONTROLLABLE_QC_CODES)
     df_otp['ON_TIME_NET'] = df_otp['ON_TIME_GROSS'] | (df_otp['LATE'] & ~df_otp['CONTROLLABLE_DELAY'])
     
     gross_otp = (df_otp['ON_TIME_GROSS'].sum() / len(df_otp) * 100)
@@ -113,11 +117,10 @@ def calculate_otp_metrics(df, controllable_codes):
 uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls'], label_visibility="collapsed")
 
 if uploaded_file is not None:
-    # Load data with spinner
-    with st.spinner('Loading and processing data...'):
-        file_bytes = uploaded_file.getvalue()
-        df = load_and_process_data(file_bytes)
-        gross_otp, net_otp, df_otp = calculate_otp_metrics(df, CONTROLLABLE_QC_CODES)
+    # Load data with progress indication
+    with st.spinner('Processing data...'):
+        df = load_data(uploaded_file)
+        gross_otp, net_otp, df_otp = calculate_otp(df)
     
     # Key Metrics Row
     st.markdown("---")
@@ -151,37 +154,41 @@ if uploaded_file is not None:
     
     with col1:
         st.markdown("### Service Type Distribution")
-        svc_counts = df['SVC'].value_counts().reset_index()
-        svc_counts.columns = ['Service', 'Count']
-        
-        if 'SVCDESC' in df.columns:
-            svc_desc_map = df.groupby('SVC')['SVCDESC'].first().to_dict()
-            svc_counts['Description'] = svc_counts['Service'].map(svc_desc_map)
-        else:
-            svc_counts['Description'] = svc_counts['Service']
-        
-        svc_counts['Percentage'] = (svc_counts['Count'] / svc_counts['Count'].sum() * 100).round(1)
-        svc_counts_sorted = svc_counts.head(10).sort_values('Count', ascending=True)
-        
-        fig_svc = px.bar(svc_counts_sorted, 
-                         x='Count', 
-                         y='Service',
-                         orientation='h',
-                         text='Count',
-                         hover_data=['Description', 'Percentage'],
-                         color='Count',
-                         color_continuous_scale='Viridis')
-        
-        fig_svc.update_traces(texttemplate='%{text}', textposition='outside')
-        fig_svc.update_layout(
-            height=400,
-            showlegend=False,
-            xaxis_title="Number of Shipments",
-            yaxis_title="Service Type",
-            margin=dict(l=0, r=0, t=0, b=0),
-            coloraxis_showscale=False
-        )
-        st.plotly_chart(fig_svc, use_container_width=True)
+        if 'SVC' in df.columns:
+            svc_counts = df['SVC'].value_counts().reset_index()
+            svc_counts.columns = ['Service', 'Count']
+            
+            # Add description mapping if available
+            if 'SVCDESC' in df.columns:
+                svc_desc_map = df.groupby('SVC')['SVCDESC'].first().to_dict()
+                svc_counts['Description'] = svc_counts['Service'].map(svc_desc_map)
+            else:
+                svc_counts['Description'] = svc_counts['Service']
+            
+            svc_counts['Percentage'] = (svc_counts['Count'] / svc_counts['Count'].sum() * 100).round(1)
+            
+            # Sort in ascending order for horizontal bar chart (will appear descending visually)
+            svc_counts_sorted = svc_counts.head(10).sort_values('Count', ascending=True)
+            
+            fig_svc = px.bar(svc_counts_sorted, 
+                             x='Count', 
+                             y='Service',
+                             orientation='h',
+                             text='Count',
+                             hover_data=['Description', 'Percentage'],
+                             color='Count',
+                             color_continuous_scale='Viridis')
+            
+            fig_svc.update_traces(texttemplate='%{text}', textposition='outside')
+            fig_svc.update_layout(
+                height=400,
+                showlegend=False,
+                xaxis_title="Number of Shipments",
+                yaxis_title="Service Type",
+                margin=dict(l=0, r=0, t=0, b=0),
+                coloraxis_showscale=False
+            )
+            st.plotly_chart(fig_svc, use_container_width=True)
     
     with col2:
         st.markdown("### OTP Performance: Gross vs Net")
@@ -229,6 +236,7 @@ if uploaded_file is not None:
             dep_counts = df['DEP'].value_counts().head(15).reset_index()
             dep_counts.columns = ['Airport', 'Shipments']
             
+            # Calculate cost per airport
             dep_cost = df.groupby('DEP')['TOTAL_CHARGES_EUR'].agg(['sum', 'mean']).reset_index()
             dep_cost.columns = ['Airport', 'Total_Cost', 'Avg_Cost']
             dep_counts = dep_counts.merge(dep_cost, on='Airport', how='left')
@@ -246,12 +254,11 @@ if uploaded_file is not None:
                 margin=dict(l=0, r=0, t=0, b=0)
             )
             st.plotly_chart(fig_dep, use_container_width=True)
-        else:
-            st.info("No departure airport data available")
     
     with col2:
         st.markdown("### Cost Distribution Analysis")
         
+        # Create cost bins
         df['Cost_Bin'] = pd.cut(df['TOTAL_CHARGES_EUR'], 
                                 bins=[0, 500, 1000, 2000, 5000, float('inf')],
                                 labels=['<€500', '€500-1K', '€1K-2K', '€2K-5K', '>€5K'])
@@ -281,7 +288,7 @@ if uploaded_file is not None:
     with col1:
         st.markdown("### Monthly Trend Analysis")
         if 'ORD CREATE' in df.columns:
-            df['Month'] = pd.to_datetime(df['ORD CREATE']).dt.to_period('M')
+            df['Month'] = df['ORD CREATE'].dt.to_period('M')
             monthly_stats = df.groupby('Month').agg({
                 'REFER': 'count',
                 'TOTAL_CHARGES_EUR': 'sum'
@@ -289,6 +296,7 @@ if uploaded_file is not None:
             monthly_stats.columns = ['Month', 'Shipments', 'Total_Cost']
             monthly_stats['Month'] = monthly_stats['Month'].astype(str)
             
+            # Create subplot with secondary y-axis
             fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
             
             fig_trend.add_trace(
@@ -321,8 +329,6 @@ if uploaded_file is not None:
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig_trend, use_container_width=True)
-        else:
-            st.info("No order creation date data available")
     
     with col2:
         st.markdown("### Quality Control Issues Analysis")
@@ -358,8 +364,6 @@ if uploaded_file is not None:
                 st.plotly_chart(fig_qc, use_container_width=True)
             else:
                 st.info("No quality control issues found in the data")
-        else:
-            st.info("Quality control data not available")
     
     # Row 4: Weight Analysis and Route Performance
     st.markdown("---")
@@ -368,17 +372,21 @@ if uploaded_file is not None:
     with col1:
         st.markdown("### Weight Distribution & Cost Correlation")
         
-        if 'Billable Weight KG' in df.columns and 'PIECES' in df.columns:
+        if 'Billable Weight KG' in df.columns:
+            # Filter valid weight data
             weight_data = df[df['Billable Weight KG'].notna() & (df['Billable Weight KG'] > 0)].copy()
             
             if len(weight_data) > 0:
+                # Sample data for performance
                 sample_size = min(500, len(weight_data))
-                fig_weight = px.scatter(weight_data.sample(sample_size), 
+                weight_sample = weight_data.sample(sample_size)
+                
+                fig_weight = px.scatter(weight_sample, 
                                       x='Billable Weight KG', 
                                       y='TOTAL_CHARGES_EUR',
-                                      color='SVC',
-                                      size='PIECES',
-                                      hover_data=['REFER', 'DEP', 'ARR'] if all(col in df.columns for col in ['REFER', 'DEP', 'ARR']) else [],
+                                      color='SVC' if 'SVC' in df.columns else None,
+                                      size='PIECES' if 'PIECES' in df.columns else None,
+                                      hover_data=['REFER'] if 'REFER' in df.columns else None,
                                       labels={'TOTAL_CHARGES_EUR': 'Cost (€)', 
                                              'Billable Weight KG': 'Weight (KG)'},
                                       opacity=0.6)
@@ -391,8 +399,6 @@ if uploaded_file is not None:
                 st.plotly_chart(fig_weight, use_container_width=True)
             else:
                 st.info("No weight data available for analysis")
-        else:
-            st.info("Weight data columns not available")
     
     with col2:
         st.markdown("### Top Routes Performance")
@@ -403,7 +409,7 @@ if uploaded_file is not None:
                 'TOTAL_CHARGES_EUR': 'mean'
             }).reset_index()
             route_stats.columns = ['Route', 'Shipments', 'Avg_Cost']
-            route_stats = route_stats[route_stats['Shipments'] >= 5]
+            route_stats = route_stats[route_stats['Shipments'] >= 5]  # Filter routes with at least 5 shipments
             route_stats = route_stats.sort_values('Shipments', ascending=False).head(15)
             
             if len(route_stats) > 0:
@@ -424,10 +430,6 @@ if uploaded_file is not None:
                     coloraxis_colorbar=dict(title="Avg Cost (€)")
                 )
                 st.plotly_chart(fig_route, use_container_width=True)
-            else:
-                st.info("Not enough route data for analysis")
-        else:
-            st.info("Route data not available")
     
     # Executive Summary
     st.markdown("---")
@@ -436,9 +438,13 @@ if uploaded_file is not None:
     col1, col2 = st.columns(2)
     
     with col1:
-        dep_top = df['DEP'].value_counts().index[0] if 'DEP' in df.columns and len(df['DEP'].value_counts()) > 0 else 'N/A'
-        dep_pct = (df['DEP'].value_counts().iloc[0] / len(df) * 100) if 'DEP' in df.columns and len(df['DEP'].value_counts()) > 0 else 0
-        
+        if 'DEP' in df.columns and len(df['DEP'].value_counts()) > 0:
+            top_dep = df['DEP'].value_counts().index[0]
+            dep_pct = (df['DEP'].value_counts().iloc[0] / len(df) * 100)
+        else:
+            top_dep = 'N/A'
+            dep_pct = 0
+            
         st.markdown("""
         **Key Performance Indicators:**
         - Total shipment volume: **{:,} shipments**
@@ -449,7 +455,7 @@ if uploaded_file is not None:
             len(df),
             df['TOTAL_CHARGES_EUR'].sum(),
             df['TOTAL_CHARGES_EUR'].mean(),
-            dep_top,
+            top_dep,
             dep_pct
         ))
     
@@ -469,15 +475,21 @@ if uploaded_file is not None:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        completeness = (1 - df['TOTAL CHARGES'].isna().sum() / len(df)) * 100 if 'TOTAL CHARGES' in df.columns else 0
+        if 'TOTAL CHARGES' in df.columns:
+            completeness = (1 - df['TOTAL CHARGES'].isna().sum() / len(df)) * 100
+        else:
+            completeness = 0
         st.metric("Cost Data Completeness", f"{completeness:.1f}%")
     
     with col2:
-        date_completeness = (1 - df['POD DATE/TIME'].isna().sum() / len(df)) * 100 if 'POD DATE/TIME' in df.columns else 0
+        if 'POD DATE/TIME' in df.columns:
+            date_completeness = (1 - df['POD DATE/TIME'].isna().sum() / len(df)) * 100
+        else:
+            date_completeness = 0
         st.metric("Delivery Data Completeness", f"{date_completeness:.1f}%")
     
     with col3:
-        if 'QCCODE' in df.columns and 'POD DATE/TIME' in df.columns and 'QDT' in df.columns:
+        if all(col in df.columns for col in ['QCCODE', 'POD DATE/TIME', 'QDT']):
             late_shipments = df[df['POD DATE/TIME'] > df['QDT']]
             qc_coverage = (df['QCCODE'].notna().sum() / len(late_shipments)) * 100 if len(late_shipments) > 0 else 100
         else:
