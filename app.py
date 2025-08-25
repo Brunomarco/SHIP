@@ -189,14 +189,14 @@ if uploaded_file is not None:
             
             # Create detailed OTP breakdown
             otp_breakdown = pd.DataFrame({
-                'Category': ['Gross OTP', 'Net OTP', 'Controllable Impact', 'Target (90%)'],
-                'Value': [gross_otp, net_otp, net_otp - gross_otp, 90],
-                'Type': ['Actual', 'Adjusted', 'Opportunity', 'Benchmark']
+                'Category': ['Gross OTP', 'Net OTP', 'Controllable Impact'],
+                'Value': [gross_otp, net_otp, net_otp - gross_otp],
+                'Type': ['Actual', 'Adjusted', 'Opportunity']
             })
             
             fig_otp = go.Figure()
             
-            colors = ['#3b82f6', '#10b981', '#fbbf24', '#ef4444']
+            colors = ['#3b82f6', '#10b981', '#fbbf24']
             for i, row in otp_breakdown.iterrows():
                 fig_otp.add_trace(go.Bar(
                     x=[row['Value']],
@@ -216,8 +216,7 @@ if uploaded_file is not None:
                 xaxis=dict(range=[0, 105]),
                 barmode='overlay'
             )
-            fig_otp.add_vline(x=90, line_dash="dash", line_color="red", 
-                            annotation_text="Target")
+            fig_otp.add_vline(x=90, line_dash="dash", line_color="red")
             st.plotly_chart(fig_otp, use_container_width=True)
         
         # Row 2: Departure and Delivery Analysis
@@ -227,7 +226,9 @@ if uploaded_file is not None:
         with col1:
             st.subheader("🛫 Top 15 Departure Points (DEP)")
             if 'DEP' in df.columns:
-                dep_counts = df.groupby('DEP').agg({
+                # Clean and standardize DEP data (convert to uppercase to avoid duplicates)
+                df['DEP_CLEAN'] = df['DEP'].str.upper().str.strip()
+                dep_counts = df.groupby('DEP_CLEAN').agg({
                     'REFER': 'count',
                     'TOTAL_CHARGES_EUR': 'mean'
                 }).reset_index()
@@ -262,7 +263,9 @@ if uploaded_file is not None:
         with col2:
             st.subheader("📍 Top 15 Delivery Points (ARR)")
             if 'ARR' in df.columns:
-                arr_counts = df.groupby('ARR').agg({
+                # Clean and standardize ARR data (convert to uppercase to avoid duplicates)
+                df['ARR_CLEAN'] = df['ARR'].str.upper().str.strip()
+                arr_counts = df.groupby('ARR_CLEAN').agg({
                     'REFER': 'count',
                     'TOTAL_CHARGES_EUR': 'mean'
                 }).reset_index()
@@ -366,7 +369,8 @@ if uploaded_file is not None:
                         xaxis_title="Number of Occurrences",
                         yaxis_title="",
                         legend_title="Issue Type",
-                        legend=dict(orientation="h", yanchor="bottom", y=-0.3, x=0)
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.5, x=0),
+                        margin=dict(b=100)  # Add bottom margin for legend
                     )
                     st.plotly_chart(fig_qc_bar, use_container_width=True)
             else:
@@ -388,21 +392,24 @@ if uploaded_file is not None:
                 labels=['<€250', '€250-500', '€500-1K', '€1K-2.5K', '€2.5K-5K', '>€5K']
             ).value_counts().sort_index()
             
-            fig_cost_dist = go.Figure()
+            # Create bar chart for cost distribution
+            fig_cost_dist = px.bar(
+                x=cost_segments.index,
+                y=cost_segments.values,
+                color=cost_segments.values,
+                color_continuous_scale='Viridis',
+                text=cost_segments.values,
+                labels={'x': 'Cost Range', 'y': 'Number of Shipments'}
+            )
             
-            # Create funnel chart for cost distribution
-            fig_cost_dist.add_trace(go.Funnel(
-                y=cost_segments.index,
-                x=cost_segments.values,
-                textposition="inside",
-                textinfo="value+percent",
-                marker=dict(color=px.colors.sequential.Viridis)
-            ))
-            
+            fig_cost_dist.update_traces(texttemplate='%{text}', textposition='outside')
             fig_cost_dist.update_layout(
                 height=400,
                 title="Shipments by Cost Range",
-                showlegend=False
+                xaxis_title="Cost Range (EUR)",
+                yaxis_title="Number of Shipments",
+                showlegend=False,
+                coloraxis_showscale=False
             )
             st.plotly_chart(fig_cost_dist, use_container_width=True)
         
