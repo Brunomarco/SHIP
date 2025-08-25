@@ -128,16 +128,23 @@ if uploaded_file is not None:
             st.metric("📊 Avg Cost", f"€{avg_cost:,.2f}")
         
         with col4:
-            st.metric("✅ OTP Gross", f"{gross_otp:.1f}%", 
-                     delta=f"{gross_otp-90:.1f}%" if gross_otp != 0 else None)
+            # Format OTP values to show full number without truncation
+            gross_display = f"{gross_otp:.1f}%"
+            delta_display = f"{gross_otp-90:.1f}%"
+            st.metric("✅ OTP Gross", gross_display, 
+                     delta=delta_display if gross_otp != 0 else None)
         
         with col5:
-            st.metric("🎯 OTP Net", f"{net_otp:.1f}%",
-                     delta=f"+{net_otp-gross_otp:.1f}%" if net_otp > gross_otp else None)
+            # Format Net OTP to show full number
+            net_display = f"{net_otp:.1f}%"
+            delta_net = f"+{net_otp-gross_otp:.1f}%" if net_otp > gross_otp else f"{net_otp-gross_otp:.1f}%"
+            st.metric("🎯 OTP Net", net_display,
+                     delta=delta_net if net_otp != gross_otp else None)
         
         with col6:
             improvement_potential = net_otp - gross_otp
-            st.metric("📈 Improvement", f"{improvement_potential:.1f}%",
+            improve_display = f"{improvement_potential:.1f}%"
+            st.metric("📈 Improvement", improve_display,
                      help="Potential OTP improvement by addressing controllable issues")
         
         st.markdown("---")
@@ -392,24 +399,25 @@ if uploaded_file is not None:
                 labels=['<€250', '€250-500', '€500-1K', '€1K-2.5K', '€2.5K-5K', '>€5K']
             ).value_counts().sort_index()
             
-            # Create bar chart for cost distribution
-            fig_cost_dist = px.bar(
-                x=cost_segments.index,
-                y=cost_segments.values,
-                color=cost_segments.values,
-                color_continuous_scale='Viridis',
-                text=cost_segments.values,
-                labels={'x': 'Cost Range', 'y': 'Number of Shipments'}
+            # Create pie chart for cost distribution
+            fig_cost_dist = px.pie(
+                values=cost_segments.values,
+                names=cost_segments.index,
+                color_discrete_sequence=px.colors.sequential.Viridis,
+                hole=0.4  # Makes it a donut chart
             )
             
-            fig_cost_dist.update_traces(texttemplate='%{text}', textposition='outside')
+            fig_cost_dist.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+            )
+            
             fig_cost_dist.update_layout(
                 height=400,
                 title="Shipments by Cost Range",
-                xaxis_title="Cost Range (EUR)",
-                yaxis_title="Number of Shipments",
-                showlegend=False,
-                coloraxis_showscale=False
+                showlegend=True,
+                legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1)
             )
             st.plotly_chart(fig_cost_dist, use_container_width=True)
         
@@ -458,20 +466,20 @@ if uploaded_file is not None:
                 }).reset_index()
                 monthly.columns = ['Month', 'Orders', 'Cost']
                 
-                # Calculate OTP by month if possible
+                # Calculate NET OTP by month if possible
                 if 'QDT' in df.columns and 'POD DATE/TIME' in df.columns:
-                    monthly_otp = []
+                    monthly_net_otp = []
                     for month in monthly['Month']:
                         month_data = df[df['Month'] == month]
-                        month_gross, _ = calculate_otp(month_data)
-                        monthly_otp.append(month_gross)
-                    monthly['OTP'] = monthly_otp
+                        _, month_net = calculate_otp(month_data)
+                        monthly_net_otp.append(month_net)
+                    monthly['Net_OTP'] = monthly_net_otp
                 
                 fig_trend = make_subplots(
                     rows=2, cols=1,
-                    subplot_titles=('Shipments & Cost', 'OTP Trend' if 'OTP' in monthly.columns else ''),
+                    subplot_titles=('Shipments & Cost', 'Net OTP Trend' if 'Net_OTP' in monthly.columns else ''),
                     specs=[[{"secondary_y": True}], [{"secondary_y": False}]],
-                    row_heights=[0.6, 0.4] if 'OTP' in monthly.columns else [1, 0]
+                    row_heights=[0.6, 0.4] if 'Net_OTP' in monthly.columns else [1, 0]
                 )
                 
                 # Shipments and Cost
@@ -487,11 +495,11 @@ if uploaded_file is not None:
                     secondary_y=True, row=1, col=1
                 )
                 
-                # OTP Trend if available
-                if 'OTP' in monthly.columns:
+                # Net OTP Trend if available
+                if 'Net_OTP' in monthly.columns:
                     fig_trend.add_trace(
-                        go.Scatter(x=monthly['Month'], y=monthly['OTP'],
-                                  name='OTP %', mode='lines+markers',
+                        go.Scatter(x=monthly['Month'], y=monthly['Net_OTP'],
+                                  name='Net OTP %', mode='lines+markers',
                                   marker_color='green', line=dict(width=2)),
                         row=2, col=1
                     )
@@ -501,8 +509,8 @@ if uploaded_file is not None:
                 fig_trend.update_layout(height=500, hovermode='x unified', showlegend=True)
                 fig_trend.update_yaxes(title_text="Orders", secondary_y=False, row=1, col=1)
                 fig_trend.update_yaxes(title_text="Cost (€)", secondary_y=True, row=1, col=1)
-                if 'OTP' in monthly.columns:
-                    fig_trend.update_yaxes(title_text="OTP %", row=2, col=1)
+                if 'Net_OTP' in monthly.columns:
+                    fig_trend.update_yaxes(title_text="Net OTP %", row=2, col=1)
                 
                 st.plotly_chart(fig_trend, use_container_width=True)
             else:
