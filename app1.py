@@ -226,7 +226,7 @@ if uploaded_file is not None:
                 xaxis=dict(range=[0, 105]),
                 barmode='overlay'
             )
-            fig_otp.add_vline(x=90, line_dash="dash", line_color="red")
+            fig_otp.add_vline(x=95, line_dash="dash", line_color="red")
             st.plotly_chart(fig_otp, use_container_width=True)
         
         # Row 2: Departure and Delivery Analysis
@@ -506,7 +506,7 @@ if uploaded_file is not None:
                                   marker_color='green', line=dict(width=2)),
                         row=2, col=1
                     )
-                    fig_trend.add_hline(y=90, line_dash="dash", line_color="red",
+                    fig_trend.add_hline(y=95, line_dash="dash", line_color="red",
                                       annotation_text="Target", row=2, col=1)
                 
                 fig_trend.update_layout(height=500, hovermode='x unified', showlegend=True)
